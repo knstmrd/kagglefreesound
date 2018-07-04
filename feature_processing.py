@@ -59,10 +59,10 @@ def find_correlated_features(df: pd.DataFrame, fname: str, settings: Dict, exclu
     upper = corr.where(np.triu(np.ones(corr.shape), k=1).astype(np.bool))
     to_drop = [column for column in upper.columns if any(upper[column] > settings['correlation_threshold'])]
     print(len(to_drop), 'higly correlated features found, threshold =', str(settings['correlation_threshold']))
-    write_list('correlated_features/' + fname + '_threshold_' + str(settings['correlation_threshold']),
+    write_list('logs/correlated_features/' + fname + '_threshold_' + str(settings['correlation_threshold']),
                to_drop, 'a')
 
-    print('Wrote into ' + 'correlated_features/' + fname + '_threshold_' + str(settings['correlation_threshold']))
+    print('Wrote into ' + 'logs/correlated_features/' + fname + '_threshold_' + str(settings['correlation_threshold']))
     return fname + '_threshold_' + str(settings['correlation_threshold']), to_drop
 
 
@@ -82,9 +82,9 @@ def find_unimportant_features(fname: str, feat_cols, feature_importances, settin
     cutoff = np.sum(importances_vals < settings['importance_threshold'])
     unimportant_feature_names = [fn[0] for fn in importances[:cutoff]]
     print(cutoff, ' unimportant features found')
-    write_list('unimportant_features/' + fname + '_threshold_' + str(settings['importance_threshold']),
+    write_list('logs/unimportant_features/' + fname + '_threshold_' + str(settings['importance_threshold']),
                unimportant_feature_names, 'a')
-    print('Wrote into ' + 'unimportant_features/' + fname + '_threshold_' + str(settings['importance_threshold']))
+    print('Wrote into ' + 'logs/unimportant_features/' + fname + '_threshold_' + str(settings['importance_threshold']))
     return fname + '_threshold_' + str(settings['importance_threshold'])
 
 
@@ -111,7 +111,7 @@ def cleanup_features(df: pd.DataFrame, fname: str, settings, exclude_cols=None):
 
     if 'correlated_features_files' in settings:
         for corr_fname in settings['correlated_features_files']:
-            with open('correlated_features/' + corr_fname) as f:
+            with open('logs/correlated_features/' + corr_fname) as f:
                 correlated_feat_cols = [line.replace('\n', '') for line in f]
             remove_features += correlated_feat_cols
 
@@ -121,7 +121,7 @@ def cleanup_features(df: pd.DataFrame, fname: str, settings, exclude_cols=None):
 
     if 'unimportant_features_files' in settings:
         for corr_fname in settings['unimportant_features_files']:
-            with open('unimportant_features/' + corr_fname) as f:
+            with open('logs/unimportant_features/' + corr_fname) as f:
                 unimportant_feat_cols = [line.replace('\n', '') for line in f]
             remove_features += unimportant_feat_cols
         log_list.append('Unimportant feature files: ' + ' '.join(settings['unimportant_features_files']))
@@ -134,7 +134,7 @@ def cleanup_features(df: pd.DataFrame, fname: str, settings, exclude_cols=None):
     feat_cols_cleaned = [col for col in feat_cols if col not in remove_features]
     print(str(len(feat_cols_cleaned)) + ' features after removal')
 
-    write_list('feature_lists/' + fname, feat_cols_cleaned, 'w')
+    write_list('logs/feature_lists/' + fname, feat_cols_cleaned, 'w')
     print('Wrote feature list into feature_lists/' + fname)
 
     log_list.append('Features file: ' + 'feature_lists/' + fname)
@@ -151,9 +151,17 @@ def load_settings():
     for line in raw_data:
         split_line = line.split(': ')
         if split_line[0].startswith('Correlated feature files'):
-            settings['correlated_features_files'] = split_line[1].split(' ')
+            res = split_line[1].split(' ')
+            if res != ['']:
+                settings['correlated_features_files'] = res
+            else:
+                settings['correlated_features_files'] = []
         elif split_line[0].startswith('Unimportant feature files'):
-            settings['unimportant_features_files'] = split_line[1].split(' ')
+            res = split_line[1].split(' ')
+            if res != ['']:
+                settings['unimportant_features_files'] = res
+            else:
+                settings['unimportant_features_files'] = []
         elif split_line[0].startswith('Features file'):
             settings['features_file'] = split_line[1]
         elif split_line[0].startswith('Features used'):
@@ -163,7 +171,7 @@ def load_settings():
     return settings
 
 
-def process_df(df, fname, settings, exclude_cols=None):
+def process_df(df, fname, settings, exclude_cols=None, force_rerun_correlation=False):
     """
     Caveats: if feature set is the same, but change correlation or importance thresholds are changed,
     find_correlated_features, find_unimportant_features have to be re-run manually
@@ -175,6 +183,8 @@ def process_df(df, fname, settings, exclude_cols=None):
     """
     rerun_correlation = False
     try:
+        # very basic - if we don't have a settings file, we haven't precomputed anything
+        # if the number of columns doesn't match, we've changed the feature-set
         feature_settings = load_settings()
         if feature_settings['total_number_of_columns'] != len(df.columns):
             rerun_correlation = True
@@ -185,20 +195,22 @@ def process_df(df, fname, settings, exclude_cols=None):
         rerun_correlation = True
     merged_settings = {**settings, **feature_settings}
     remove_features = []
-    # TODO: fix and feature_settings['unimportant_features_files'][0] != ''
+
+    if force_rerun_correlation:
+        rerun_correlation = True
 
     if rerun_correlation:
         print('Re-computing correlated features')
         # perhaps we already have some pre-computed lists of features we're not using,
         # so let's remove them first
         for corr_fname in feature_settings['correlated_features_files']:
-            with open('correlated_features/' + corr_fname) as f:
+            with open('logs/correlated_features/' + corr_fname) as f:
                 feat_cols = [line.replace('\n', '') for line in f]
             remove_features += feat_cols
 
         if feature_settings['unimportant_features_files'] != []:
             for unimportant_fname in feature_settings['unimportant_features_files']:
-                with open('unimportant_features/' + unimportant_fname) as f:
+                with open('logs/unimportant_features/' + unimportant_fname) as f:
                     feat_cols = [line.replace('\n', '') for line in f]
                 remove_features += feat_cols
 
@@ -207,14 +219,6 @@ def process_df(df, fname, settings, exclude_cols=None):
         feat_cols_cleaned = cleanup_features(df, fname, merged_settings, exclude_cols)
     else:  # don't need to recompute correlations, and we can load feature names from a file
         print('Nothing to re-compute, loading feature names from file')
-        with open(merged_settings['features_file']) as f:
+        with open('logs/' + merged_settings['features_file']) as f:
             feat_cols_cleaned = [line.replace('\n', '') for line in f]
     return merged_settings, feat_cols_cleaned
-
-
-def run_cv():
-    pass
-
-
-def run_classification():
-    pass
